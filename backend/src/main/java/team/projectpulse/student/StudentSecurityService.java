@@ -5,13 +5,13 @@ import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
 /**
- * Answers the questions a route asks about one named student: is that student the caller herself
- * ({@code isStudentSelf}), and is the caller an instructor of that student's course section
- * ({@code isCurrentUserInstructorOfStudentSection}).
+ * Answers ownership and lifecycle-scope questions about a student. The route authorization manager uses
+ * {@code isStudentSelf} and {@code isCurrentUserInstructorOfStudentSection}; the student lifecycle service uses
+ * {@code isLifecycleManager} after loading the student.
  *
- * <p>Every check fails closed: an id that names no row, or a link not yet established, is denied rather than
- * throwing. These methods run inside an {@code AuthorizationManager}, upstream of the {@code DispatcherServlet},
- * so an exception thrown here escapes the filter chain as a 500 that also tells the caller which ids exist.
+ * <p>The route checks fail closed for missing ids or missing instructor links. Lifecycle authorization runs after
+ * the service lookup so an unknown student still receives the use case's not-found response before scope is
+ * checked.
  */
 @Service
 @Transactional
