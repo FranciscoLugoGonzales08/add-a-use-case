@@ -37,5 +37,10 @@ export const updateStudent = (updatedStudent: Student) =>
     updatedStudent
   )
 
+export const deactivateStudent = (studentId: number) =>
+  request.post<any, UpdateStudentResponse>(
+    `${API.STUDENTS_ENDPOINT}/${studentId}/deactivate`
+  )
+
 export const deleteStudent = (id: number) =>
   request.delete<any, DeleteStudentResponse>(`${API.STUDENTS_ENDPOINT}/${id}`)

@@ -15,6 +15,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
+import org.springframework.security.authorization.AuthorityAuthorizationManager;
 import org.springframework.security.authorization.AuthorizationManagers;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -22,13 +23,16 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import team.projectpulse.user.UserRepository;
 import team.projectpulse.security.authorizationmanagers.*;
 
 import java.security.KeyPair;
@@ -204,7 +208,10 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.POST, this.baseUrl + "/students/search").hasAuthority("ROLE_instructor")
                         .requestMatchers(HttpMethod.POST, this.baseUrl + "/students").permitAll()
                         .requestMatchers(HttpMethod.GET, this.baseUrl + "/students/{studentId}").access(this.userOwnershipAuthorizationManager)
-                        .requestMatchers(HttpMethod.PUT, this.baseUrl + "/students/{studentId}").access(this.userOwnershipAuthorizationManager)
+                        .requestMatchers(HttpMethod.PUT, this.baseUrl + "/students/{studentId}").access(AuthorizationManagers.anyOf(
+                                this.userOwnershipAuthorizationManager,
+                                AuthorityAuthorizationManager.hasAuthority("ROLE_instructor")))
+                        .requestMatchers(HttpMethod.POST, this.baseUrl + "/students/{studentId}/deactivate").hasAuthority("ROLE_instructor")
                         .requestMatchers(HttpMethod.DELETE, this.baseUrl + "/students/{studentId}").access(this.userOwnershipAuthorizationManager)
                         .requestMatchers(HttpMethod.GET, this.baseUrl + "/students/teams/{teamId}").access(this.teamMembershipAuthorizationManager)
 
@@ -342,8 +349,29 @@ public class SecurityConfiguration {
     }
 
     @Bean
-    public JwtDecoder jwtDecoder() {
-        return NimbusJwtDecoder.withPublicKey(this.publicKey).build();
+    public JwtDecoder jwtDecoder(UserRepository userRepository) {
+        return withActiveAccountValidation(
+                NimbusJwtDecoder.withPublicKey(this.publicKey).build(),
+                userRepository);
+    }
+
+    static JwtDecoder withActiveAccountValidation(JwtDecoder decoder, UserRepository userRepository) {
+        return token -> {
+            Jwt jwt = decoder.decode(token);
+            Object userIdClaim = jwt.getClaims().get("userId");
+            if (!(userIdClaim instanceof Number userId)) {
+                throw new JwtException("The account associated with this token is not active.");
+            }
+
+            boolean accountIsActive = userRepository.findById(userId.intValue())
+                    .map(user -> user.isEnabled())
+                    .orElse(false);
+            if (!accountIsActive) {
+                throw new JwtException("The account associated with this token is not active.");
+            }
+
+            return jwt;
+        };
     }
 
     @Bean

@@ -36,6 +36,9 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     JsonMapper jsonMapper;
 
+    @Autowired
+    StudentRepository studentRepository;
+
     String adminToken;
 
     String instructorBillToken;
@@ -232,7 +235,7 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
         studentDto.put("firstName", "John (updated)");
         studentDto.put("lastName", "Smith");
         studentDto.put("email", "j.smith@abc.edu");
-        studentDto.put("enabled", false); // Student cannot change their enabled status.
+        studentDto.put("enabled", true); // Student cannot change their enabled status.
         studentDto.put("roles", "instructor"); // Student cannot change their role.
 
         String json = this.jsonMapper.writeValueAsString(studentDto);
@@ -250,6 +253,125 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.data.password").doesNotExist())
                 .andExpect(jsonPath("$.data.enabled").value(true)) // The enabled status should not be changed.
                 .andExpect(jsonPath("$.data.roles").value("student")); // The role should not be changed.
+    }
+
+    @Test
+    void testStudentJohnCannotChangeOwnAccountStatus() throws Exception {
+        Map<String, Object> studentDto = new HashMap<>();
+        studentDto.put("username", "john");
+        studentDto.put("firstName", "John");
+        studentDto.put("lastName", "Smith");
+        studentDto.put("email", "j.smith@abc.edu");
+        studentDto.put("enabled", false);
+        studentDto.put("roles", "student");
+
+        this.mockMvc.perform(put(this.baseUrl + "/students/4")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(this.jsonMapper.writeValueAsString(studentDto))
+                        .header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT))
+                .andExpect(jsonPath("$.message").value("Students cannot change their account status."));
+        org.assertj.core.api.Assertions.assertThat(this.studentRepository.findById(4).orElseThrow().isEnabled()).isTrue();
+    }
+
+    @Test
+    void testAssignedInstructorDeactivatesStudentAndRetainsTeamAndExistingWork() throws Exception {
+        Integer originalTeamId = this.studentRepository.findById(4).orElseThrow().getTeam().getTeamId();
+
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
+                .andExpect(jsonPath("$.message").value("Deactivate student successfully"))
+                .andExpect(jsonPath("$.data.enabled").value(false))
+                .andExpect(jsonPath("$.data.teamId").value(originalTeamId));
+
+        org.assertj.core.api.Assertions.assertThat(this.studentRepository.findById(4).orElseThrow().getTeam().getTeamId())
+                .isEqualTo(originalTeamId);
+        this.mockMvc.perform(post(this.baseUrl + "/activities/search?page=0&size=30")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}")
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.flag").value(true));
+        this.mockMvc.perform(get(this.baseUrl + "/evaluations/students/4/week/2023-W31")
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.flag").value(true));
+    }
+
+    @Test
+    void testCourseAdminCanDeactivateStudent() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.data.enabled").value(false));
+    }
+
+    @Test
+    void testDeactivationReturnsNotFoundForMissingStudent() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/999999/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.NOT_FOUND));
+    }
+
+    @Test
+    void testDeactivationIsForbiddenForUnassignedInstructorAndStudent() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.adminTimToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+        org.assertj.core.api.Assertions.assertThat(this.studentRepository.findById(4).orElseThrow().isEnabled()).isTrue();
+    }
+
+    @Test
+    void testRepeatedDeactivationReturnsClearErrorWithoutChangingStatus() throws Exception {
+        Student student = this.studentRepository.findById(4).orElseThrow();
+        student.setEnabled(false);
+        this.studentRepository.saveAndFlush(student);
+
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT))
+                .andExpect(jsonPath("$.message").value("This student's account is already deactivated."));
+        org.assertj.core.api.Assertions.assertThat(this.studentRepository.findById(4).orElseThrow().isEnabled()).isFalse();
+    }
+
+    @Test
+    void testGenericStudentUpdateCannotDeactivateButCanReactivate() throws Exception {
+        Map<String, Object> studentDto = new HashMap<>();
+        studentDto.put("username", "j.smith@abc.edu");
+        studentDto.put("firstName", "John");
+        studentDto.put("lastName", "Smith");
+        studentDto.put("email", "j.smith@abc.edu");
+        studentDto.put("enabled", false);
+        studentDto.put("roles", "student");
+
+        this.mockMvc.perform(put(this.baseUrl + "/students/4")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(this.jsonMapper.writeValueAsString(studentDto))
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT))
+                .andExpect(jsonPath("$.message").value("Active student accounts must be deactivated using the dedicated action."));
+        org.assertj.core.api.Assertions.assertThat(this.studentRepository.findById(4).orElseThrow().isEnabled()).isTrue();
+
+        Student student = this.studentRepository.findById(4).orElseThrow();
+        student.setEnabled(false);
+        this.studentRepository.saveAndFlush(student);
+        studentDto.put("enabled", true);
+        this.mockMvc.perform(put(this.baseUrl + "/students/4")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(this.jsonMapper.writeValueAsString(studentDto))
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.data.enabled").value(true));
     }
 
     @Test

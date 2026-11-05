@@ -30,6 +30,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -395,6 +396,23 @@ class EvaluationServiceTest {
     }
 
     @Test
+    void testAddPeerEvaluationRejectsDeactivatedEvaluatee() {
+        LocalDate fixedDate = LocalDate.of(2023, 8, 8);
+        Clock fixedClock = Clock.fixed(fixedDate.atStartOfDay(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        given(this.clock.instant()).willReturn(fixedClock.instant());
+        given(this.clock.getZone()).willReturn(fixedClock.getZone());
+        this.eric.setEnabled(false);
+        PeerEvaluation newPeerEvaluation = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "public comment", "private comment");
+
+        Throwable throwable = catchThrowable(() -> this.evaluationService.addPeerEvaluation(newPeerEvaluation));
+
+        assertThat(throwable)
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
+                .hasMessage("The selected student is deactivated and cannot receive a new peer evaluation.");
+        verify(this.evaluationRepository, never()).save(any(PeerEvaluation.class));
+    }
+
+    @Test
     void testAddPeerEvaluationDuplicatedEvaluation() {
         // Given
         LocalDate fixedDate = LocalDate.of(2023, 8, 8);
@@ -444,6 +462,45 @@ class EvaluationServiceTest {
     }
 
     @Test
+    void testUpdatePeerEvaluationIsReadOnlyWhileEvaluateeIsDeactivated() {
+        PeerEvaluation oldPeerEvaluation = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "public comment", "private comment");
+        oldPeerEvaluation.setPeerEvaluationId(1);
+        PeerEvaluation update = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "changed public comment", "changed private comment");
+        this.eric.setEnabled(false);
+        given(this.evaluationRepository.findById(1)).willReturn(Optional.of(oldPeerEvaluation));
+
+        Throwable throwable = catchThrowable(() -> this.evaluationService.updatePeerEvaluation(1, update));
+
+        assertThat(throwable)
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
+                .hasMessage("This evaluation cannot be changed while its evaluatee's account is deactivated.");
+        assertThat(oldPeerEvaluation.getPublicComment()).isEqualTo("public comment");
+        assertThat(oldPeerEvaluation.getPrivateComment()).isEqualTo("private comment");
+        verify(this.evaluationRepository, never()).save(any(PeerEvaluation.class));
+    }
+
+    @Test
+    void testReactivatedEvaluateeCanBeEditedWhileSubmissionWindowIsOpen() {
+        LocalDate fixedDate = LocalDate.of(2023, 8, 8);
+        Clock fixedClock = Clock.fixed(fixedDate.atStartOfDay(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        given(this.clock.instant()).willReturn(fixedClock.instant());
+        given(this.clock.getZone()).willReturn(fixedClock.getZone());
+        PeerEvaluation oldPeerEvaluation = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "public comment", "private comment");
+        oldPeerEvaluation.setPeerEvaluationId(1);
+        PeerEvaluation update = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "resumed public comment", "resumed private comment");
+        this.eric.setEnabled(false);
+        this.eric.setEnabled(true);
+        given(this.evaluationRepository.findById(1)).willReturn(Optional.of(oldPeerEvaluation));
+        given(this.evaluationRepository.save(oldPeerEvaluation)).willReturn(oldPeerEvaluation);
+
+        PeerEvaluation result = this.evaluationService.updatePeerEvaluation(1, update);
+
+        assertThat(result.getPublicComment()).isEqualTo("resumed public comment");
+        assertThat(result.getPrivateComment()).isEqualTo("resumed private comment");
+        verify(this.evaluationRepository).save(oldPeerEvaluation);
+    }
+
+    @Test
     void testUpdatePeerEvaluationAfterTheSubmissionWindowClosed() {
         // Given
         // Sep 15, 2023 falls in 2023-W37, so the only week still open is 2023-W36 and this evaluation's has closed
@@ -457,6 +514,8 @@ class EvaluationServiceTest {
 
         PeerEvaluation update = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "new public comment", "new private comment");
         update.setPeerEvaluationId(1);
+        this.eric.setEnabled(false);
+        this.eric.setEnabled(true);
 
         given(this.evaluationRepository.findById(1)).willReturn(Optional.of(oldPeerEvaluation));
 
@@ -590,6 +649,23 @@ class EvaluationServiceTest {
         assertThat(report.getPeerEvaluationAverages().get(1).getAverageTotalScore()).isCloseTo(50.0, within(0.01));
         assertThat(report.getPeerEvaluationAverages().get(2).getAverageTotalScore()).isCloseTo(51.0, within(0.01));
         assertThat(report.getPeerEvaluationAverages().get(3).getAverageTotalScore()).isCloseTo(52.0, within(0.01));
+    }
+
+    @Test
+    void testGenerateWeeklyPeerEvaluationReportIncludesDeactivatedStudentsOnCurrentTeams() {
+        given(this.sectionRepository.findById(anyInt())).willReturn(Optional.of(new Section("2023-2024", LocalDate.of(2023, 8, 14), LocalDate.of(2024, 4, 29), true, DayOfWeek.MONDAY, LocalTime.of(23, 59), DayOfWeek.TUESDAY, LocalTime.of(23, 59))));
+        given(this.studentRepository.findBySectionSectionId(anyInt())).willReturn(this.students);
+        given(this.evaluationRepository.findByWeekAndEvaluateeId("2023-W31", 3)).willReturn(this.johnsEvaluations);
+        given(this.evaluationRepository.findByWeekAndEvaluateeId("2023-W31", 4)).willReturn(this.ericsW31Evaluations);
+        given(this.evaluationRepository.findByWeekAndEvaluateeId("2023-W31", 5)).willReturn(this.woodysEvaluations);
+        given(this.evaluationRepository.findByWeekAndEvaluateeId("2023-W31", 6)).willReturn(this.amandasEvaluations);
+        this.eric.setEnabled(false);
+
+        WeeklyPeerEvaluationReport report = this.evaluationService.generateWeeklyPeerEvaluationReportForSection(2, "2023-W31");
+
+        assertThat(report.getPeerEvaluationAverages()).hasSize(5);
+        assertThat(report.getPeerEvaluationAverages())
+                .anySatisfy(average -> assertThat(average.getStudentId()).isEqualTo(this.eric.getId()));
     }
 
     @Test
