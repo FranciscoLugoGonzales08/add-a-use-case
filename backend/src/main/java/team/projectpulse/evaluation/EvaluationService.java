@@ -67,6 +67,10 @@ public class EvaluationService {
             throw new PeerEvaluationIllegalArgumentException("The evaluator and evaluatee must be on the same team.");
         }
 
+        if (!newPeerEvaluation.getEvaluatee().isEnabled()) {
+            throw new PeerEvaluationIllegalArgumentException("The selected student is deactivated and cannot receive a new peer evaluation.");
+        }
+
         // Make sure this is not a duplicate evaluation
         if (this.evaluationRepository.findByWeekAndEvaluatorIdAndEvaluateeId(newPeerEvaluation.getWeek(), newPeerEvaluation.getEvaluator().getId(), newPeerEvaluation.getEvaluatee().getId()).isPresent()) {
             throw new PeerEvaluationIllegalArgumentException("You have already submitted an evaluation for " + newPeerEvaluation.getEvaluatee().getFirstName() + " in this week.");
@@ -78,6 +82,9 @@ public class EvaluationService {
     public PeerEvaluation updatePeerEvaluation(Integer evaluationId, PeerEvaluation update) {
         return this.evaluationRepository.findById(evaluationId)
                 .map(oldEvaluation -> {
+                    if (!oldEvaluation.getEvaluatee().isEnabled()) {
+                        throw new PeerEvaluationIllegalArgumentException("This evaluation cannot be changed while its evaluatee's account is deactivated.");
+                    }
                     // The week is read off the stored evaluation rather than off the update, because the caller
                     // writes the payload and could otherwise name an open week to reopen a closed evaluation.
                     requireOpenSubmissionWindow(oldEvaluation.getEvaluator().getSection(), oldEvaluation.getWeek(), WINDOW_CLOSED_MESSAGE);

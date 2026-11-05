@@ -6,6 +6,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import team.projectpulse.AbstractIntegrationTest;
 import team.projectpulse.evaluation.dto.PeerEvaluationDto;
 import team.projectpulse.evaluation.dto.RatingDto;
+import team.projectpulse.student.Student;
+import team.projectpulse.student.StudentRepository;
 import team.projectpulse.system.StatusCode;
 import org.hamcrest.Matchers;
 import org.json.JSONObject;
@@ -55,6 +57,9 @@ public class EvaluationIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     PeerEvaluationRepository evaluationRepository;
+
+    @Autowired
+    StudentRepository studentRepository;
 
     @Autowired
     EntityManager entityManager;
@@ -135,6 +140,115 @@ public class EvaluationIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.data.privateComment").value("Keep it up"))
                 .andExpect(jsonPath("$.data.createdAt").isNotEmpty())
                 .andExpect(jsonPath("$.data.updatedAt").isNotEmpty());
+    }
+
+    @Test
+    void testStudentJohnCannotAddEvaluationForDeactivatedEvaluatee() throws Exception {
+        Student eric = this.studentRepository.findById(5).orElseThrow();
+        eric.setEnabled(false);
+        var existingEvaluation = this.evaluationRepository.findByWeekAndEvaluatorIdAndEvaluateeId("2023-W36", 4, 5);
+        List<RatingDto> ratingDtos = List.of(
+                new RatingDto(null, 1, 4.0),
+                new RatingDto(null, 2, 9.0),
+                new RatingDto(null, 3, 7.0),
+                new RatingDto(null, 4, 10.0),
+                new RatingDto(null, 5, 5.0),
+                new RatingDto(null, 6, 6.0)
+        );
+        LocalDate fixedDate = LocalDate.of(2023, 9, 15);
+        Clock fixedClock = Clock.fixed(fixedDate.atStartOfDay(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        given(this.clock.instant()).willReturn(fixedClock.instant());
+        given(this.clock.getZone()).willReturn(fixedClock.getZone());
+        PeerEvaluationDto peerEvaluationDto = new PeerEvaluationDto(null, "2023-W36", 4, "John Smith", 5, "Eric Hudson", ratingDtos, 41.0, "Good job", "Keep it up", null, null);
+
+        this.mockMvc.perform(post(this.baseUrl + "/evaluations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(this.jsonMapper.writeValueAsString(peerEvaluationDto))
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT))
+                .andExpect(jsonPath("$.message").value("The selected student is deactivated and cannot receive a new peer evaluation."));
+        assertThat(this.evaluationRepository.findByWeekAndEvaluatorIdAndEvaluateeId("2023-W36", 4, 5)).isEqualTo(existingEvaluation);
+    }
+
+    @Test
+    void testStudentJohnCannotEditEvaluationForDeactivatedEvaluatee() throws Exception {
+        Student eric = this.studentRepository.findById(5).orElseThrow();
+        eric.setEnabled(false);
+        String originalComment = this.evaluationRepository.findById(1).orElseThrow().getPublicComment();
+        List<RatingDto> ratingDtos = List.of(
+                new RatingDto(null, 1, 4.0),
+                new RatingDto(null, 2, 9.0),
+                new RatingDto(null, 3, 7.0),
+                new RatingDto(null, 4, 10.0),
+                new RatingDto(null, 5, 5.0),
+                new RatingDto(null, 6, 6.0)
+        );
+        PeerEvaluationDto peerEvaluationDto = new PeerEvaluationDto(1, "2023-W31", 4, "John Smith", 5, "Eric Hudson", ratingDtos, 41.0, "Changed comment", "Changed private comment", null, null);
+
+        this.mockMvc.perform(put(this.baseUrl + "/evaluations/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(this.jsonMapper.writeValueAsString(peerEvaluationDto))
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT))
+                .andExpect(jsonPath("$.message").value("This evaluation cannot be changed while its evaluatee's account is deactivated."));
+        assertThat(this.evaluationRepository.findById(1).orElseThrow().getPublicComment()).isEqualTo(originalComment);
+    }
+
+    @Test
+    void testStudentJohnCanEditEvaluationAfterEvaluateeIsReactivated() throws Exception {
+        Student eric = this.studentRepository.findById(5).orElseThrow();
+        eric.setEnabled(false);
+        eric.setEnabled(true);
+        List<RatingDto> ratingDtos = List.of(
+                new RatingDto(null, 1, 4.0),
+                new RatingDto(null, 2, 9.0),
+                new RatingDto(null, 3, 7.0),
+                new RatingDto(null, 4, 10.0),
+                new RatingDto(null, 5, 5.0),
+                new RatingDto(null, 6, 6.0)
+        );
+        LocalDate fixedDate = LocalDate.of(2023, 8, 8);
+        Clock fixedClock = Clock.fixed(fixedDate.atStartOfDay(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        given(this.clock.instant()).willReturn(fixedClock.instant());
+        given(this.clock.getZone()).willReturn(fixedClock.getZone());
+        PeerEvaluationDto peerEvaluationDto = new PeerEvaluationDto(1, "2023-W31", 4, "John Smith", 5, "Eric Hudson", ratingDtos, 41.0, "Updated after reactivation", "Updated private comment", null, null);
+
+        this.mockMvc.perform(put(this.baseUrl + "/evaluations/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(this.jsonMapper.writeValueAsString(peerEvaluationDto))
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
+                .andExpect(jsonPath("$.data.publicComment").value("Updated after reactivation"));
+    }
+
+    @Test
+    void testWeeklyReportIncludesDeactivatedEvaluatee() throws Exception {
+        Student eric = this.studentRepository.findById(5).orElseThrow();
+        eric.setEnabled(false);
+
+        MvcResult result = this.mockMvc.perform(get(this.baseUrl + "/sections/2/week/2023-W31")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.adminBingyangToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
+                .andReturn();
+
+        JSONObject response = new JSONObject(result.getResponse().getContentAsString());
+        var averages = response.getJSONObject("data").getJSONArray("peerEvaluationAverages");
+        boolean containsEric = false;
+        for (int i = 0; i < averages.length(); i++) {
+            if (averages.getJSONObject(i).getInt("studentId") == 5) {
+                containsEric = true;
+                break;
+            }
+        }
+        assertThat(containsEric).isTrue();
     }
 
     @Test
@@ -347,6 +461,9 @@ public class EvaluationIntegrationTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("An evaluation can no longer be changed once its submission window has closed")
     void testEvaluatorJohnUpdatesOwnEvaluationAfterTheSubmissionWindowClosed() throws Exception {
+        Student eric = this.studentRepository.findById(5).orElseThrow();
+        eric.setEnabled(false);
+        eric.setEnabled(true);
         List<RatingDto> ratingDtos = List.of(
                 new RatingDto(1, 1, 4.0),
                 new RatingDto(2, 2, 9.0),
