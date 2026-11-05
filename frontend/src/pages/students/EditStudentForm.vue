@@ -13,14 +13,28 @@
     <el-form-item label="Username:" prop="username">
       <el-input v-model="studentBeingEdited.username"></el-input>
     </el-form-item>
-    <el-form-item label="Status:" prop="enabled">
-      <el-switch
-        v-model="studentBeingEdited.enabled"
-        inline-prompt
-        active-text="Enabled"
-        inactive-text="Disabled"
-        style="--el-switch-on-color: #13ce66; --el-switch-off-color: #ff4949"
-      />
+    <el-form-item label="Status:">
+      <el-tag :type="studentBeingEdited.enabled ? 'success' : 'danger'">
+        {{ studentBeingEdited.enabled ? 'Enabled' : 'Disabled' }}
+      </el-tag>
+      <el-button
+        v-if="studentBeingEdited.enabled"
+        data-cy="student-deactivate"
+        type="danger"
+        plain
+        @click="confirmDeactivation"
+      >
+        Deactivate
+      </el-button>
+      <el-button
+        v-else
+        data-cy="student-reactivate"
+        type="success"
+        plain
+        @click="confirmReactivation"
+      >
+        Reactivate
+      </el-button>
     </el-form-item>
     <el-form-item label="First Name:" prop="firstName">
       <el-input v-model="studentBeingEdited.firstName"></el-input>
@@ -36,16 +50,18 @@
     </el-form-item>
     <div style="display: flex; justify-content: end">
       <el-button @click="$emit('close-dialog')"> Cancel </el-button>
-      <el-button type="primary" @click="updateExistingStudent()"> Confirm </el-button>
+      <el-button data-cy="student-save" type="primary" @click="updateExistingStudent()">
+        Confirm
+      </el-button>
     </div>
   </el-form>
 </template>
 
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Student } from '@/apis/student/types'
 import type { FormInstance } from 'element-plus'
-import { findStudentById, updateStudent } from '@/apis/student'
+import { deactivateStudent, findStudentById, updateStudent } from '@/apis/student'
 import { ref, onMounted } from 'vue'
 
 const { studentId } = defineProps(['studentId'])
@@ -74,7 +90,6 @@ const rules = {
       trigger: 'blur'
     }
   ],
-  enabled: [{ required: true, message: 'Please select the status of the user.', trigger: 'blur' }],
   firstName: [
     { required: true, message: 'Please provide the first name of the user.', trigger: 'blur' }
   ],
@@ -115,12 +130,63 @@ async function updateExistingStudent() {
     lastName: studentBeingEdited.value.lastName,
     email: studentBeingEdited.value.email
   }
-  console.log(updatedStudent)
   // Call the API to update the user
   await updateStudent(updatedStudent)
 
   ElMessage.success('Student updated successfully')
   emit('close-dialog')
+}
+
+async function confirmDeactivation() {
+  try {
+    await ElMessageBox.confirm(
+      'The student will lose access. Existing weekly activity reports and peer evaluations will be retained, and the student will remain assigned to the team and in course section reports. Active teammates will not be required to evaluate this student, and new peer evaluations will not be accepted. Existing evaluations will be read-only while the student is deactivated; if their submission window closes, they remain read-only after reactivation. Continue?',
+      'Deactivate student',
+      {
+        confirmButtonText: 'Deactivate',
+        cancelButtonText: 'Cancel',
+        type: 'warning'
+      }
+    )
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    throw error
+  }
+
+  const studentId = studentBeingEdited.value.id
+  if (studentId === undefined) throw new Error('Student must be loaded before deactivation.')
+  await deactivateStudent(studentId)
+  studentBeingEdited.value.enabled = false
+  ElMessage.success('Student deactivated successfully')
+}
+
+async function confirmReactivation() {
+  try {
+    await ElMessageBox.confirm(
+      "This will restore the student's access to the system. Continue?",
+      'Reactivate student',
+      {
+        confirmButtonText: 'Reactivate',
+        cancelButtonText: 'Cancel',
+        type: 'warning'
+      }
+    )
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    throw error
+  }
+
+  const updatedStudent: Student = {
+    id: studentBeingEdited.value.id,
+    username: studentBeingEdited.value.username,
+    enabled: true,
+    firstName: studentBeingEdited.value.firstName,
+    lastName: studentBeingEdited.value.lastName,
+    email: studentBeingEdited.value.email
+  }
+  await updateStudent(updatedStudent)
+  studentBeingEdited.value.enabled = true
+  ElMessage.success('Student reactivated successfully')
 }
 </script>
 
