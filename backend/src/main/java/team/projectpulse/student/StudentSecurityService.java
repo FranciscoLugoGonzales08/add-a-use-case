@@ -47,4 +47,19 @@ public class StudentSecurityService {
                 .anyMatch(instructor -> instructor.getId().equals(instructorIdFromJwt));
     }
 
+    public boolean isLifecycleManager(Student student) {
+        if (!this.userUtils.hasRole("ROLE_instructor")) {
+            return false;
+        }
+
+        Integer callerId = this.userUtils.getUserId();
+        if (callerId == null) {
+            return false;
+        }
+
+        return student.getSection().getCourse().getCourseAdmin().getId().equals(callerId)
+                || student.getSection().getInstructors().stream()
+                .anyMatch(instructor -> instructor.getId().equals(callerId));
+    }
+
 }

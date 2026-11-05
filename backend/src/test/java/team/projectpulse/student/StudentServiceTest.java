@@ -1,11 +1,8 @@
 package team.projectpulse.student;
 
-import org.junit.jupiter.api.AfterEach;
-import team.projectpulse.instructor.Instructor;
 import team.projectpulse.section.Section;
 import team.projectpulse.section.SectionRepository;
 import team.projectpulse.system.UserUtils;
-import team.projectpulse.user.MyUserPrincipal;
 import team.projectpulse.user.userinvitation.UserInvitationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,9 +15,6 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.context.SecurityContext;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.List;
@@ -45,6 +39,8 @@ class StudentServiceTest {
     PasswordEncoder passwordEncoder;
     @Mock
     UserUtils userUtils;
+    @Mock
+    StudentSecurityService studentSecurityService;
 
     @InjectMocks
     private StudentService studentService;
@@ -66,11 +62,6 @@ class StudentServiceTest {
         Student rosendo = new Student("rosendo", "Rosendo", "Maxwell", "r.maxwell@abc.edu", "123456", true, "student");
 
         this.students = List.of(john, eric, jerry, woody, amanda, cora, agustin, mavis, mary, rosendo);
-    }
-
-    @AfterEach
-    void tearDown() {
-        SecurityContextHolder.clearContext(); // Clear the security context after each test to avoid interference between tests
     }
 
     @Test
@@ -126,17 +117,11 @@ class StudentServiceTest {
     @Test
     void testStudentUpdateOwnInfo() {
         // Given
-        Student update = new Student("john", "John (updated)", "Smith (updated)", "j.smith@abc.edu (updated)", "", false, "admin student");
+        Student update = new Student("john", "John (updated)", "Smith (updated)", "j.smith@abc.edu (updated)", "", true, "admin student");
         given(this.studentRepository.findById(1)).willReturn(Optional.of(this.students.get(0)));
+        given(this.studentSecurityService.isStudentSelf(1)).willReturn(true);
+        given(this.studentSecurityService.isLifecycleManager(this.students.get(0))).willReturn(false);
         given(this.studentRepository.save(any(Student.class))).willReturn(this.students.get(0));
-
-        Instructor instructor = new Instructor();
-        instructor.setRoles("student");
-        MyUserPrincipal myUserPrincipal = new MyUserPrincipal(instructor);
-
-        SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
-        securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(myUserPrincipal, null, myUserPrincipal.getAuthorities()));
-        SecurityContextHolder.setContext(securityContext);
 
         // When
         Student result = this.studentService.updateStudent(1, update);
@@ -147,23 +132,17 @@ class StudentServiceTest {
         assertThat(result.getLastName()).isEqualTo(update.getLastName());
         assertThat(result.getEmail()).isEqualTo(update.getEmail());
         assertThat(result.getRoles()).isNotEqualTo(update.getRoles());
-        assertThat(result.isEnabled()).isNotEqualTo(update.isEnabled());
+        assertThat(result.isEnabled()).isEqualTo(update.isEnabled());
     }
 
     @Test
     void testInstructorUpdatesStudent() {
         // Given
-        Student update = new Student("john", "John (updated)", "Smith (updated)", "j.smith@abc.edu (updated)", "", false, "admin student");
+        Student update = new Student("john", "John (updated)", "Smith (updated)", "j.smith@abc.edu (updated)", "", true, "admin student");
         given(this.studentRepository.findById(1)).willReturn(Optional.of(this.students.get(0)));
+        given(this.studentSecurityService.isStudentSelf(1)).willReturn(false);
+        given(this.studentSecurityService.isLifecycleManager(this.students.get(0))).willReturn(true);
         given(this.studentRepository.save(any(Student.class))).willReturn(this.students.get(0));
-
-        Instructor instructor = new Instructor();
-        instructor.setRoles("instructor");
-        MyUserPrincipal myUserPrincipal = new MyUserPrincipal(instructor);
-
-        SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
-        securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(myUserPrincipal, null, myUserPrincipal.getAuthorities()));
-        SecurityContextHolder.setContext(securityContext);
 
         // When
         Student result = this.studentService.updateStudent(1, update);
@@ -173,8 +152,81 @@ class StudentServiceTest {
         assertThat(result.getFirstName()).isEqualTo(update.getFirstName());
         assertThat(result.getLastName()).isEqualTo(update.getLastName());
         assertThat(result.getEmail()).isEqualTo(update.getEmail());
-//        assertThat(result.getRoles()).isEqualTo(update.getRoles());
+        assertThat(result.getRoles()).isNotEqualTo(update.getRoles());
         assertThat(result.isEnabled()).isEqualTo(update.isEnabled());
+    }
+
+    @Test
+    void testStudentCannotChangeOwnAccountStatus() {
+        Student update = new Student("john", "John", "Smith", "j.smith@abc.edu", "", false, "student");
+        Student student = this.students.get(0);
+        given(this.studentRepository.findById(1)).willReturn(Optional.of(student));
+        given(this.studentSecurityService.isStudentSelf(1)).willReturn(true);
+        given(this.studentSecurityService.isLifecycleManager(student)).willReturn(false);
+
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> this.studentService.updateStudent(1, update)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Students cannot change their account status.");
+        assertThat(student.isEnabled()).isTrue();
+        verify(this.studentRepository, never()).save(any(Student.class));
+    }
+
+    @Test
+    void testGenericUpdateCannotDeactivateStudent() {
+        Student update = new Student("john", "John", "Smith", "j.smith@abc.edu", "", false, "student");
+        Student student = this.students.get(0);
+        given(this.studentRepository.findById(1)).willReturn(Optional.of(student));
+        given(this.studentSecurityService.isStudentSelf(1)).willReturn(false);
+        given(this.studentSecurityService.isLifecycleManager(student)).willReturn(true);
+
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> this.studentService.updateStudent(1, update)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Active student accounts must be deactivated using the dedicated action.");
+        assertThat(student.isEnabled()).isTrue();
+        verify(this.studentRepository, never()).save(any(Student.class));
+    }
+
+    @Test
+    void testLifecycleManagerCanReactivateStudent() {
+        Student student = this.students.get(0);
+        student.setEnabled(false);
+        Student update = new Student("john", "John", "Smith", "j.smith@abc.edu", "", true, "student");
+        given(this.studentRepository.findById(1)).willReturn(Optional.of(student));
+        given(this.studentSecurityService.isStudentSelf(1)).willReturn(false);
+        given(this.studentSecurityService.isLifecycleManager(student)).willReturn(true);
+        given(this.studentRepository.save(student)).willReturn(student);
+
+        Student result = this.studentService.updateStudent(1, update);
+
+        assertThat(result.isEnabled()).isTrue();
+        verify(this.studentRepository).save(student);
+    }
+
+    @Test
+    void testDeactivateStudentPreservesStudentAndTeamAndSavesDisabledStatus() {
+        Student student = this.students.get(0);
+        given(this.studentRepository.findById(1)).willReturn(Optional.of(student));
+        given(this.studentSecurityService.isLifecycleManager(student)).willReturn(true);
+        given(this.studentRepository.save(student)).willReturn(student);
+
+        Student result = this.studentService.deactivateStudent(1);
+
+        assertThat(result).isSameAs(student);
+        assertThat(result.isEnabled()).isFalse();
+        verify(this.studentRepository).save(student);
+    }
+
+    @Test
+    void testDeactivateStudentRejectsAlreadyDeactivatedStudent() {
+        Student student = this.students.get(0);
+        student.setEnabled(false);
+        given(this.studentRepository.findById(1)).willReturn(Optional.of(student));
+        given(this.studentSecurityService.isLifecycleManager(student)).willReturn(true);
+
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> this.studentService.deactivateStudent(1)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("This student's account is already deactivated.");
+        verify(this.studentRepository, never()).save(any(Student.class));
     }
 
     @Test
