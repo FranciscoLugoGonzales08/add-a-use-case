@@ -1458,7 +1458,7 @@ Details:
 
 **Preconditions:**
 - PRE-1. The course admin or instructor is logged into the system.
-- PRE-2. There exists at least one active student in the system.
+- PRE-2. The selected student has an active account.
 
 **Postconditions:**
 - POST-1. The student's account is deactivated.
@@ -1473,12 +1473,24 @@ Details:
 7. Use case ends.
 
 **Extensions:**
+- **2a. The selected student no longer exists:**
+  - 2a1. The system informs the course admin or instructor that the student was not found.
+  - 2a2. Use case ends.
+- **3a. The caller is neither a course admin nor an instructor assigned to the selected student's course section:**
+  - 3a1. The system denies the request and does not change the student's account (BR-student-lifecycle, FR-SEC-deny-unauthorized).
+  - 3a2. Use case ends.
+- **4a. The course admin or instructor cancels at the warning:**
+  - 4a1. The system closes the warning without changing the student's account.
+  - 4a2. Use case ends.
+- **5a. The selected student is already deactivated when the confirmation is submitted:**
+  - 5a1. The system informs the course admin or instructor that the student's account is already deactivated and makes no change.
+  - 5a2. Use case ends.
 **Priority:** Low
 **Frequency of Use:** Rare. Occurs occasionally when a student withdraws from a course section.
-**Business Rules:** BR-student-lifecycle
+**Business Rules:** BR-student-lifecycle, BR-evaluation-target-active, BR-evaluation-editable-until-close, BR-evaluation-report-roster, BR-submission-owed
 
 **Associated Information:**
-- Consequence of the deactivation: The student will no longer be able to log in or submit weekly activity reports and peer evaluations, but the student's account and her previously submitted work are kept in the system. Deactivation will NOT remove the student from the system, and the account can be reactivated in the future (UC-STU-reactivate-student: Reactivate a student). This is distinct from deletion (UC-STU-delete-student: Delete a student), which is a physical, unrecoverable delete. The course admin or instructor shall be able to cancel the use case at any time prior to submitting it.
+- Deactivation disables the student's account without removing her from the system or her assigned team. Her previously submitted weekly activity reports and peer evaluations remain in the system. While her account is deactivated, she cannot submit work, active teammates are not required to evaluate her, and new peer evaluations of her are not accepted (BR-evaluation-target-active, BR-submission-owed). Editability of her existing peer evaluations follows BR-evaluation-editable-until-close; the warning identifies this consequence before confirmation. The course section's peer evaluation report continues to include her as a current team member regardless of account status (BR-evaluation-report-roster). The account can be reactivated in the future (UC-STU-reactivate-student: Reactivate a student). This is distinct from deletion (UC-STU-delete-student: Delete a student), which is a physical, unrecoverable delete.
 
 **Related Use Cases:** UC-STU-delete-student: Delete a student; UC-STU-reactivate-student: Reactivate a student
 **Assumptions:**
@@ -1513,10 +1525,12 @@ Details:
 **Extensions:**
 **Priority:** Low
 **Frequency of Use:** Rare. Occurs occasionally when a previously withdrawn student returns to a course section.
-**Business Rules:** BR-student-lifecycle
+**Business Rules:** BR-student-lifecycle, BR-evaluation-editable-until-close
 
 **Associated Information:**
 - The course admin or instructor shall be able to cancel the use case at any time prior to submitting it.
+- Because deactivation leaves the student assigned to her team, reactivation restores account access without changing that assignment. Team reassignment is a separate course admin action.
+- Existing peer evaluations' editability follows BR-evaluation-editable-until-close.
 
 **Related Use Cases:** UC-STU-delete-student: Delete a student; UC-STU-deactivate-student: Deactivate a student
 **Assumptions:**
@@ -1871,6 +1885,14 @@ Supervised teams shall be organized by section names.
 - **4a. Input validation rule violation:**
   - 4a1. The system alerts the student that an input validation rule is violated and displays the nature and location of the error.
   - 4a2. The student corrects the mistake and returns to step 4 of the normal flow.
+- **4b. The student attempts to submit a new peer evaluation for a deactivated team member:**
+  - 4b1. The system rejects that evaluation and informs the student that only active team members may be evaluated (BR-evaluation-target-active).
+  - 4b2. The system does not create an evaluation for the deactivated student.
+- **7a. The student attempts to edit an existing evaluation while its evaluatee is deactivated:**
+  - 7a1. The system rejects the edit and informs the student that the evaluation cannot be changed while the evaluatee's account is deactivated (BR-evaluation-editable-until-close).
+  - 7a2. The existing evaluation remains unchanged.
+- **7b. The evaluatee is reactivated before the submission window closes:**
+  - 7b1. The system permits the evaluator to edit the existing evaluation until the normal deadline (BR-evaluation-editable-until-close).
 
 **Priority:** High
 **Frequency of Use:** Approximately 35-40 users, 1 usage per year.
@@ -2207,7 +2229,7 @@ Report generating algorithm: N/A
 4. The student evaluates each team member (self included) and confirms that she has finished.
 5. The system validates the student's inputs according to the "Details" defined in the Associated Information of this use case.
 6. The system displays the details of the peer evaluation and asks the student to confirm the evaluation and submission.
-7. The system notes that a submitted peer evaluation remains editable while its submission window is open; the student may re-submit it to update it until the window closes (BR-evaluation-editable-until-close, BR-evaluation-submission-window).
+7. The system indicates whether the submitted peer evaluation can be modified again under the account-status and submission-window rules (BR-evaluation-editable-until-close, BR-evaluation-submission-window).
 8. The student either confirms the evaluation and submission (continues the normal flow) or chooses to modify the details (return to step 3).
 9. The system saves the peer evaluation and informs the student that this peer evaluation has been submitted.
 10. Use case ends.
@@ -2228,12 +2250,12 @@ Report generating algorithm: N/A
 
 **Priority:** High
 **Frequency of Use:** Approximately 35-40 users, 1 usage per week.
-**Business Rules:** BR-team-scoped-access (the student evaluates the members of a team she belongs to, and no other team), BR-team-assignment-required (only a student assigned to a team submits one), BR-active-weeks, BR-evaluation-editable-until-close, BR-evaluation-submission-window, BR-evaluation-private-comment
+**Business Rules:** BR-team-scoped-access (the student evaluates the members of a team she belongs to, and no other team), BR-team-assignment-required (only a student assigned to a team submits one), BR-active-weeks, BR-evaluation-editable-until-close, BR-evaluation-submission-window, BR-evaluation-private-comment, BR-evaluation-target-active
 
 **Associated Information:**
 
 Details:
-- Every team member MUST be evaluated.
+- Every active team member MUST be evaluated. A deactivated team member is not an eligible new evaluation target (BR-evaluation-target-active). Changes to existing evaluations about her follow BR-evaluation-editable-until-close.
 - Scores MUST be integers.
 
 Example (each team member, self included, is evaluated on every rubric criterion):
@@ -2343,7 +2365,7 @@ Report generating algorithm: For each individual criterion score (e.g., Quality 
 
 **Priority:** High
 **Frequency of Use:** Approximately 2 users, average of 1 usage per week.
-**Business Rules:** BR-section-scoped-access (the instructor may generate the report only for a course section she is assigned to), BR-evaluation-private-comment, BR-submission-owed (who has not turned in the peer evaluation)
+**Business Rules:** BR-section-scoped-access (the instructor may generate the report only for a course section she is assigned to), BR-evaluation-private-comment, BR-submission-owed (who has not turned in the peer evaluation), BR-evaluation-report-roster
 
 **Associated Information:**
 
